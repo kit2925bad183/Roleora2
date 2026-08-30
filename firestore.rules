@@ -1,0 +1,146 @@
+rules_version = '2';
+
+/**
+ * ROLEORA - Multi-Role Adaptive Workspaces
+ * Cloud Firestore Security Rules
+ *
+ * Security Architecture & Access Boundaries:
+ * 1. Global Profession Templates:
+ *    - Public read-only access for authenticated users to load schema blueprints (Movie Director, College Student, Software Developer, Photographer, Farmer).
+ *    - Client write/update/delete denied to maintain template integrity.
+ *
+ * 2. User-Specific Isolated Workspaces (/users/{userId}):
+ *    - Strict owner-only access (request.auth.uid == userId).
+ *    - Cross-user and cross-tenant reads and writes are strictly forbidden.
+ *    - All nested collections (roles, records, diary_entries, audit_events) inherit strict ownership boundaries.
+ *    - Audit logs are append-only to preserve historical integrity.
+ */
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // -------------------------------------------------------------------------
+    // Helper Functions
+    // -------------------------------------------------------------------------
+
+    // Check if the request is from an authenticated user
+    function isAuthenticated() {
+      return request.auth != null && request.auth.uid != null;
+    }
+
+    // Check if the authenticated user is the designated owner of the document path
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Validate string length and non-emptiness
+    function isValidNonEmptyString(value, maxLength) {
+      return value is string && value.size() > 0 && value.size() <= maxLength;
+    }
+
+    // -------------------------------------------------------------------------
+    // Canonical Profession Templates (Read-Only Schema Definitions)
+    // -------------------------------------------------------------------------
+    match /profession_templates/{templateId} {
+      // Any authenticated user can read canonical role templates
+      allow read: if isAuthenticated();
+      // Regular client apps cannot modify global template definitions
+      allow write: if false;
+    }
+
+    match /templates/{templateId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    // -------------------------------------------------------------------------
+    // User Root Data & Workspace Hierarchy
+    // -------------------------------------------------------------------------
+    match /users/{userId} {
+      // User root document holds high-level sync metadata and account stats
+      allow read, write: if isOwner(userId);
+
+      // --- User's Active & Archived Roles ---
+      match /roles/{roleId} {
+        allow read, write, delete: if isOwner(userId);
+
+        // --- Phase 2: Common Entries (Diary, Note, Photo, Voice, Video, Document, etc.) ---
+        match /entries/{entryId} {
+          allow read, delete: if isOwner(userId);
+          allow create, update: if isOwner(userId)
+            && (request.resource.data.roleId == roleId || !('roleId' in request.resource.data));
+
+          // Entry version history snapshots
+          match /versions/{versionId} {
+            allow read, write, delete: if isOwner(userId);
+          }
+        }
+
+        // --- Phase 2: Tasks & Reminders ---
+        match /tasks/{taskId} {
+          allow read, delete: if isOwner(userId);
+          allow create, update: if isOwner(userId)
+            && (request.resource.data.roleId == roleId || !('roleId' in request.resource.data));
+        }
+
+        // --- Phase 2: Events & Calendar ---
+        match /events/{eventId} {
+          allow read, delete: if isOwner(userId);
+          allow create, update: if isOwner(userId)
+            && (request.resource.data.roleId == roleId || !('roleId' in request.resource.data));
+        }
+
+        // --- Phase 2: Attachments Metadata ---
+        match /attachments/{attachmentId} {
+          allow read, delete: if isOwner(userId);
+          allow create, update: if isOwner(userId)
+            && (request.resource.data.roleId == roleId || !('roleId' in request.resource.data));
+        }
+
+        // --- Role-Scoped Profession Records (Projects, Courses, PRs, Shoots, Crops, etc.) ---
+        match /records/{recordId} {
+          allow read, delete: if isOwner(userId);
+          
+          allow create, update: if isOwner(userId) 
+            && (request.resource.data.roleId == roleId || !('roleId' in request.resource.data));
+        }
+
+        // --- Role-Scoped Diary & Activity Logs ---
+        match /diary_entries/{entryId} {
+          allow read, delete: if isOwner(userId);
+
+          allow create, update: if isOwner(userId)
+            && (request.resource.data.roleId == roleId || !('roleId' in request.resource.data));
+        }
+
+        // --- Role-Scoped Version Snapshots & Migrations ---
+        match /templates/{versionId} {
+          allow read, write: if isOwner(userId);
+        }
+
+        // --- Role-Scoped Immutable Audit Events Trail ---
+        match /audit_events/{eventId} {
+          // Owner can read audit history
+          allow read: if isOwner(userId);
+          // Owner can append audit logs
+          allow create: if isOwner(userId);
+          // Audit logs are strictly immutable (no modification or deletion)
+          allow update, delete: if false;
+        }
+      }
+
+      // --- User-Level Immutable Audit Events Trail ---
+      match /audit_events/{eventId} {
+        allow read, create: if isOwner(userId);
+        allow update, delete: if false;
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // Default Deny Rule for Unmatched Paths
+    // -------------------------------------------------------------------------
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

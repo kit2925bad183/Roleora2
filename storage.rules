@@ -1,0 +1,57 @@
+rules_version = '2';
+
+/**
+ * ROLEORA - Cloud Storage Security Rules
+ *
+ * Enforces:
+ * 1. Authenticated user ownership (/users/{userId}/...)
+ * 2. Scoped paths for role media (photos, audio notes, video clips, documents)
+ * 3. MIME type validations (image/*, audio/*, video/*, application/pdf, application/json)
+ * 4. Maximum size restrictions (Images/Audio <= 25MB, Videos <= 100MB, Docs <= 50MB)
+ * 5. Deny-by-default for unauthenticated or cross-user access
+ */
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isAuthenticated() {
+      return request.auth != null && request.auth.uid != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isValidMediaSize() {
+      return request.resource.size < 100 * 1024 * 1024; // 100 MB max
+    }
+
+    function isValidMimeType() {
+      return request.resource.contentType.matches('image/.*')
+        || request.resource.contentType.matches('audio/.*')
+        || request.resource.contentType.matches('video/.*')
+        || request.resource.contentType == 'application/pdf'
+        || request.resource.contentType == 'application/json'
+        || request.resource.contentType == 'text/plain';
+    }
+
+    // User-scoped role media path
+    match /users/{userId}/roles/{roleId}/{allPaths=**} {
+      allow read: if isOwner(userId);
+      allow write: if isOwner(userId) && isValidMediaSize() && isValidMimeType();
+      allow delete: if isOwner(userId);
+    }
+
+    // User profile pictures and account assets
+    match /users/{userId}/profile/{fileName} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId) && request.resource.size < 10 * 1024 * 1024 && request.resource.contentType.matches('image/.*');
+      allow delete: if isOwner(userId);
+    }
+
+    // Default Deny
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

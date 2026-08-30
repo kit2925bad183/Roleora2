@@ -1,0 +1,6 @@
+{
+  "name": "ROLEORA",
+  "description": "Every Role. Your Way. Multi-role operating system with adaptive profession setups, versioned templates, and specialized workspaces for Movie Director, College Student, Software Developer, Photographer, and Farmer.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
